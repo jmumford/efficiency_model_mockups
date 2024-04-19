@@ -156,7 +156,33 @@ def calc_run_num_diff_from_avg(trial_order, avg_run_info):
     return diff_stat
 
 
-def calc_prob_next_given_last1(trial_order):
+def calc_avg_prob_next_given_last1_and_last2(trial_order):
+    cond_prob1_sum = []
+    cond_prob2_sum = []
+    nsim = 10000
+    trial_order_copy = trial_order.copy()
+    for i in range(nsim):
+      np.random.shuffle(trial_order_copy)
+      cond_prob1_loop, _, _ = calc_prob_next_given_last1(trial_order_copy)
+      cond_prob2_loop, _, _ = calc_prob_next_given_last2(trial_order_copy)
+      if i==0:
+          cond_prob1_sum = cond_prob1_loop
+          cond_prob2_sum = cond_prob2_loop
+      else:
+          cond_prob1_sum.iloc[:, cond_prob1_sum.columns != 'cond_val'] = \
+            cond_prob1_sum.iloc[:, cond_prob1_sum.columns != 'cond_val'] + cond_prob1_loop.iloc[:, cond_prob1_sum.columns != 'cond_val']    
+          cond_prob2_sum.iloc[:, cond_prob2_sum.columns != 'cond_pairs'] = \
+            cond_prob2_sum.iloc[:, cond_prob2_sum.columns != 'cond_pairs'] + cond_prob2_loop.iloc[:, cond_prob2_sum.columns != 'cond_pairs']
+    cond_prob_given_last1_avg = cond_prob1_sum.copy()
+    cond_prob_given_last1_avg.iloc[:, cond_prob1_sum.columns != 'cond_val'] = \
+        cond_prob_given_last1_avg.iloc[:, cond_prob1_sum.columns != 'cond_val']/nsim
+    cond_prob_given_last2_avg = cond_prob2_sum.copy()
+    cond_prob_given_last2_avg.iloc[:, cond_prob2_sum.columns != 'cond_pairs'] = \
+        cond_prob_given_last2_avg.iloc[:, cond_prob2_sum.columns != 'cond_pairs']/nsim
+    return cond_prob_given_last1_avg, cond_prob_given_last2_avg
+
+
+def calc_prob_next_given_last1(trial_order, cond_prob_given_last1_avg=None):
     '''
     Calculates the conditional probability of the next trial being a specific type 
     given the current trial type
@@ -184,10 +210,16 @@ def calc_prob_next_given_last1(trial_order):
     output_prob_df = pd.DataFrame(output_prob)
     max_prob = output_prob_df.values.max()
     output_prob_df.insert(0, 'cond_val', cond_list)
-    return output_prob_df, max_prob
+    output_prob_df = output_prob_df.fillna(0)
+    if cond_prob_given_last1_avg is not None:
+        sum_abs_diff_w_avg_prob = np.sum(np.abs(cond_prob_given_last1_avg.drop(['cond_val'], axis=1) - 
+                                         output_prob_df.drop(['cond_val'], axis=1)).values)
+    else:
+        sum_abs_diff_w_avg_prob = None
+    return output_prob_df, max_prob, sum_abs_diff_w_avg_prob
 
 
-def calc_prob_next_given_last2(trial_order):
+def calc_prob_next_given_last2(trial_order, cond_prob_given_last2_avg=None):
     '''
     Calculates the conditional probability of the next trial being a specific type 
     given the current trial type.  Note, the result is set to nan if a condition pair
@@ -227,7 +259,13 @@ def calc_prob_next_given_last2(trial_order):
     output_prob_df = pd.DataFrame(output_prob)
     max_prob = np.nanmax(output_prob_df)
     output_prob_df.insert(0, 'cond_pairs', all_pairs)
-    return output_prob_df, max_prob
+    output_prob_df = output_prob_df.fillna(0)
+    if cond_prob_given_last2_avg is not None:
+        sum_abs_diff_w_avg_prob = np.sum(np.abs(cond_prob_given_last2_avg.drop(['cond_pairs'], axis=1) - 
+                                         output_prob_df.drop(['cond_pairs'], axis=1)).values)
+    else:
+        sum_abs_diff_w_avg_prob = None
+    return output_prob_df, max_prob, sum_abs_diff_w_avg_prob
 
 
 def pred_second_half_from_first(trial_order):
@@ -337,7 +375,7 @@ def est_eff_and_vif(events, tr, total_time, contrasts, deriv=True):
     return eff_out, vifs, desmat
     
 
-def est_psych_fitness(trial_type, avg_run_info):
+def est_psych_fitness(trial_type, avg_run_info, cond_prob_given_last1_avg, cond_prob_given_last2_avg):
     '''
     Estimate all of the psychological fitness measures for a given trial order
     '''
@@ -345,9 +383,9 @@ def est_psych_fitness(trial_type, avg_run_info):
     output['kao_measure'] = FcCalc(trial_type, confoundorder=3)
     output['prob_runs_gte_2']  = est_prob_runs_gte_2_trials(trial_type)
     output['run_num_diff_from_avg'] = calc_run_num_diff_from_avg(trial_type, avg_run_info)
-    _, output['prob_next_given_last1'] = calc_prob_next_given_last1(trial_type)
-    _, output['prob_next_given_last2'] = calc_prob_next_given_last2(trial_type)
-    output['pred_second_half_from_first'] = pred_second_half_from_first(trial_type)
+    _, output['prob_next_given_last1'], output['sum_abs_diff_prob_next_given_last1'] = calc_prob_next_given_last1(trial_type, cond_prob_given_last1_avg)
+    _, output['prob_next_given_last2'], output['sum_abs_diff_prob_next_given_last2'] = calc_prob_next_given_last2(trial_type, cond_prob_given_last2_avg)
+    #output['pred_second_half_from_first'] = pred_second_half_from_first(trial_type)
     return output
 
 
@@ -440,6 +478,7 @@ def get_all_contrast_vif(desmat, contrasts):
 
 def run_eff_sim(nsim, events_inputs, make_timings_function, contrasts, 
                 avg_trial_repeats_info, tr, total_time, trials_psych_assess_map,
+                cond_prob_given_last1_avg, cond_prob_given_last2_avg,
                 deriv=True, est_psych=True, name_swap=None):
     '''
     Runs nsim randomly created stop signal designs through efficiency/vif/psych fitness
@@ -452,7 +491,7 @@ def run_eff_sim(nsim, events_inputs, make_timings_function, contrasts,
     '''
     psych_variables = ['kao_measure', 'prob_runs_gte_2', 'run_num_diff_from_avg',
                        'prob_next_given_last1', 'prob_next_given_last2',
-                       'pred_second_half_from_first']
+                       'sum_abs_diff_prob_next_given_last1', 'sum_abs_diff_prob_next_given_last2']
     output = {f'eff_{contrast_name}':[] for contrast_name in contrasts.keys()}
     for contrast_name in contrasts.keys():
         output[f'vif_{contrast_name}'] = [] 
@@ -472,7 +511,8 @@ def run_eff_sim(nsim, events_inputs, make_timings_function, contrasts,
         if est_psych == True:
             trials_psych_assess = events['trial_type'][events['trial_type'].isin(trials_psych_assess_map)]
             trials_psych_assess_coded = np.array(trials_psych_assess.replace(trials_psych_assess_map))
-            psych_assess = est_psych_fitness(trials_psych_assess_coded, avg_trial_repeats_info)
+            psych_assess = est_psych_fitness(trials_psych_assess_coded, avg_trial_repeats_info, 
+                                             cond_prob_given_last1_avg, cond_prob_given_last2_avg)
             for key, val in psych_assess.items():
                 output[key].append(val)
         for key, val in eff_vals.items():
