@@ -1,4 +1,0 @@
-# git apply-gitignore 
-# will now clean up the files that should be ignored
-[alias]
-     apply-gitignore = !git ls-files -ci --exclude-standard -z | xargs -0 git rm --cached
