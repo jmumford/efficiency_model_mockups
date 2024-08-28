@@ -346,7 +346,7 @@ def make_contrast_matrix(contrasts, desmat):
     return contrast_matrix
 
 
-def est_eff_and_vif(events, tr, total_time, contrasts, deriv=True):
+def est_eff_and_vif(events, tr, max_total_time, contrasts, time_past_last_offset=20, deriv=True):
     '''
     Builds design matrix and estimates efficiency for all contrasts
     '''
@@ -354,7 +354,8 @@ def est_eff_and_vif(events, tr, total_time, contrasts, deriv=True):
         hrf_model_val = 'spm + derivative'
     else:
         hrf_model_val = 'spm'
-    frame_times = np.arange(0, total_time, tr)
+    scan_cutoff = np.floor((events.onset.values[-1:][0] + events.duration.values[-1:][0] + time_past_last_offset))
+    frame_times = np.arange(0, scan_cutoff, tr)
     desmat = make_first_level_design_matrix(
         frame_times,
         events,
@@ -366,12 +367,8 @@ def est_eff_and_vif(events, tr, total_time, contrasts, deriv=True):
     eff_vec = 1/var_vec
     contrast_names = list(contrasts.keys())
     eff_out = {contrast_names[i]: eff_vec[i] for i in range(len(eff_vec)) }
-    # For VIF it is necessary to remove the extra TRs at the end (if nothing is happening)
-    #  This assumes there are extra TRs added to retain a consistent scan length across 
-    # different models that are being compared
-    scan_cutoff = np.floor((events.onset.values[-1:][0] + events.duration.values[-1:][0] + 20))
-    desmat_trimmed = desmat.loc[:scan_cutoff, :]
-    vifs = get_all_contrast_vif(desmat_trimmed, contrasts)
+
+    vifs = get_all_contrast_vif(desmat, contrasts)
     return eff_out, vifs, desmat
     
 
@@ -477,9 +474,9 @@ def get_all_contrast_vif(desmat, contrasts):
 
 
 def run_eff_sim(nsim, events_inputs, make_timings_function, contrasts, 
-                avg_trial_repeats_info, tr, total_time, trials_psych_assess_map,
+                avg_trial_repeats_info, tr, max_total_time, trials_psych_assess_map,
                 cond_prob_given_last1_avg, cond_prob_given_last2_avg,
-                deriv=True, est_psych=True, name_swap=None):
+                time_past_last_offset=20, deriv=True, est_psych=True, name_swap=None):
     '''
     Runs nsim randomly created stop signal designs through efficiency/vif/psych fitness
     measures and outputs results
@@ -504,10 +501,12 @@ def run_eff_sim(nsim, events_inputs, make_timings_function, contrasts,
 
     for sim in range(nsim):
         events = make_timings_function(**events_inputs)
-        if np.max(events.onset) > total_time:
+        scan_cutoff = np.floor((events.onset.values[-1:][0] + events.duration.values[-1:][0] + time_past_last_offset))
+        if scan_cutoff > max_total_time:
             print('WARNING:  You need to increase the total time to fit all trials \n'
                 'estimates from this simulation set should be discarded')
-        eff_vals, vifs, _ = est_eff_and_vif(events, tr, total_time, contrasts, deriv)
+        eff_vals, vifs, _ = est_eff_and_vif(events, tr, max_total_time, contrasts,  time_past_last_offset=time_past_last_offset,
+                                            deriv=deriv)
         if est_psych == True:
             trials_psych_assess = events['trial_type'][events['trial_type'].isin(trials_psych_assess_map)]
             trials_psych_assess_coded = np.array(trials_psych_assess.replace(trials_psych_assess_map))
@@ -523,5 +522,5 @@ def run_eff_sim(nsim, events_inputs, make_timings_function, contrasts,
             events['trial_type'] = events['trial_type'].replace(name_swap, regex=True)
         all_events.append(events)
         output['scan_length'].append(
-            events.onset.values[-1:][0] + events.duration.values[-1:][0] + 20)
+            events.onset.values[-1:][0] + events.duration.values[-1:][0] + time_past_last_offset)
     return pd.DataFrame(output), all_events
