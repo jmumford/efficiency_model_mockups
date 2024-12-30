@@ -1,0 +1,7 @@
+extend-include = ["*.ipynb"]
+
+[format]
+quote-style = "single"
+
+[lint]
+extend-select = ["E501", "W", "N", "R", "I"]
